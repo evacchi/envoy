@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"strconv"
-
 	"github.com/envoyproxy/envoy/contrib/golang/common/go/api"
+	"net/http"
+	"strconv"
 )
 
 var UpdateUpstreamBody = "upstream response body updated by the simple plugin"
@@ -17,11 +17,11 @@ type filter struct {
 	callbacks api.FilterCallbackHandler
 	path      string
 	config    *config
+
+	handler http.Handler
 }
 
 func (f *filter) sendLocalReplyInternal() api.StatusType {
-	body := fmt.Sprintf("%s, path: %s\r\n", f.config.echoBody, f.path)
-	f.callbacks.DecoderFilterCallbacks().SendLocalReply(200, body, nil, 0, "")
 	// Remember to return LocalReply when the request is replied locally
 	return api.LocalReply
 }
@@ -29,28 +29,38 @@ func (f *filter) sendLocalReplyInternal() api.StatusType {
 // Callbacks which are called in request path
 // The endStream is true if the request doesn't have body
 func (f *filter) DecodeHeaders(header api.RequestHeaderMap, endStream bool) api.StatusType {
-	f.path, _ = header.Get(":path")
-	api.LogDebugf("get path %s", f.path)
+	headers := http.Header{}
 
-	if f.path == "/localreply_by_config" {
-		return f.sendLocalReplyInternal()
+	method, _ := header.Get(":method")
+	scheme, _ := header.Get(":scheme")
+	auth, _ := header.Get(":authority")
+	path, _ := header.Get(":path")
+
+	r, err := http.NewRequest(method, fmt.Sprintf("%s://%s%s", scheme, auth, path), nopReader{})
+	if err != nil {
+		panic(err)
 	}
-	return api.Continue
-	/*
-		// If the code is time-consuming, to avoid blocking the Envoy,
-		// we need to run the code in a background goroutine
-		// and suspend & resume the filter
-		go func() {
-			defer f.callbacks.RecoverPanic()
-			// do time-consuming jobs
 
-			// resume the filter
-			f.callbacks.Continue(status)
-		}()
+	header.Range(func(key, value string) bool {
+		k := http.CanonicalHeaderKey(key)
+		headers[k] = append(headers[k], value)
+		return true
+	})
 
-		// suspend the filter
-		return api.Running
-	*/
+	rw := newResponseWriter()
+	if endStream {
+		f.handler.ServeHTTP(rw, r)
+		grcpStatus := int64(0)
+		// fixme: check response writer
+		if rw.status == 0 {
+			rw.status = http.StatusOK
+		}
+		f.callbacks.DecoderFilterCallbacks().SendLocalReply(rw.status, rw.buf.String(), rw.header, grcpStatus, "lol")
+		return api.LocalReply
+	} else {
+		return api.Continue
+	}
+
 }
 
 // DecodeData might be called multiple times during handling the request body.

@@ -3,12 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/envoyproxy/envoy/contrib/golang/filters/http/source/go/pkg/http"
 
 	xds "github.com/cncf/xds/go/xds/type/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/envoyproxy/envoy/contrib/golang/common/go/api"
-	"github.com/envoyproxy/envoy/contrib/golang/filters/http/source/go/pkg/http"
+
+	gohttp "net/http"
 )
 
 const Name = "simple"
@@ -68,6 +70,7 @@ func filterFactory(c interface{}, callbacks api.FilterCallbackHandler) api.Strea
 	return &filter{
 		callbacks: callbacks,
 		config:    conf,
+		handler:   gohttp.HandlerFunc(myHttpHandler),
 	}
 }
 
